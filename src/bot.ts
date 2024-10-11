@@ -19,6 +19,9 @@ const User = mongoose.model<IUser>("User", userSchema);
 const token: string = process.env.TOKEN_BOT as string;
 const bot = new TelegramBot(token, { polling: true });
 
+const myId = process.env.MY_TELEGRAM_ID as string;
+const groupId = process.env.TELEGRAM_GROUP_ID as string;
+
 mongoose
     .connect(process.env.MONGODB_DATABASE_URL as string)
     .then(() => {
@@ -28,19 +31,28 @@ mongoose
         console.error("Erro ao conectar no MongoDB:", err);
     });
 
-bot.on("message", async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from?.id;
+bot.on("new_chat_members", async (msg) => {
+    const newMembers = msg.new_chat_members;
 
-    if (!userId) return;
+    if (!newMembers) return;
 
-    const userExists = await User.findOne({ userId });
-    if (!userExists) {
-        const newUser = new User({ userId, addedDate: new Date() });
-        await newUser.save();
-        bot.sendMessage(chatId, `Usuário ${userId} adicionado e monitorado.`);
-    } else {
-        bot.sendMessage(chatId, `Usuário ${userId} já está sendo monitorado.`);
+    for (const newMember of newMembers) {
+        const userId = newMember.id;
+
+        const userExists = await User.findOne({ userId });
+        if (!userExists) {
+            const newUser = new User({ userId, addedDate: new Date() });
+            await newUser.save();
+            bot.sendMessage(
+                myId,
+                `Usuário ${userId} foi adicionado e monitorado.`
+            );
+        } else {
+            bot.sendMessage(
+                myId,
+                `Usuário ${userId} já está sendo monitorado.`
+            );
+        }
     }
 });
 
@@ -53,12 +65,21 @@ cron.schedule("0 0 * * *", async () => {
             (now.getTime() - new Date(user.addedDate).getTime()) /
             (1000 * 3600 * 24);
         if (differenceInDays >= 30) {
-            await User.deleteOne({ userId: user.userId });
+            try {
+                await bot.banChatMember(groupId, user.userId);
 
-            bot.sendMessage(
-                "Olá",
-                `Usuário ${user.userId} foi removido após 30 dias.`
-            );
+                await bot.unbanChatMember(groupId, user.userId);
+
+                await bot.sendMessage(
+                    myId,
+                    `Usuário ${user.userId} foi removido após 30 dias.`
+                );
+            } catch (error) {
+                console.error(
+                    `Erro ao enviar mensagem para o usuário ${user.userId}:`,
+                    error
+                );
+            }
         }
     });
 });
